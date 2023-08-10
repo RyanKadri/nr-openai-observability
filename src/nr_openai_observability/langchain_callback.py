@@ -211,7 +211,7 @@ class NewRelicCallbackHandler(BaseCallbackHandler):
         if not trace_id and "newrelic" in sys.modules:
             import newrelic.agent
 
-            trace_id = newrelic.agent.current_transaction().trace_id
+            trace_id = newrelic.agent.current_transaction().trace_id if newrelic.agent.current_transaction() else None
 
         trace_id = trace_id or self.trace_id
 
