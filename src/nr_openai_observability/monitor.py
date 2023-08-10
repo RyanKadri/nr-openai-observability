@@ -1,7 +1,6 @@
 import atexit
 import logging
 import os
-import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -288,7 +287,7 @@ def handle_create_chat_completion(
         if not span["trace.id"] and "newrelic" in sys.modules:
             import newrelic.agent
 
-            span["trace.id"] = newrelic.agent.current_trace().trace_id if newrelic.agent.current_trace() else None
+            span["trace.id"] = newrelic.agent.current_transaction().trace_id if newrelic.agent.current_transaction() else None
         monitor.record_span(span)
 
     return response
