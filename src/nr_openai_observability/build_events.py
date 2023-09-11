@@ -4,7 +4,7 @@ from datetime import datetime
 import openai
 
 
-def _build_messages_events(messages, completion_id, model):
+def build_messages_events(messages, completion_id, model):
     events = []
     for index, message in enumerate(messages):
         currMessage = {
@@ -65,13 +65,7 @@ def build_completion_events(response, request, response_headers, response_time):
 
     completion.update(_get_rate_limit_data(response_headers))
 
-    messages = _build_messages_events(
-        request.get("messages", []) + [response.choices[0].message],
-        completion_id,
-        response.model,
-    )
-
-    return {"messages": messages, "completion": completion}
+    return completion
 
 
 def build_completion_error_events(request, error):
@@ -94,13 +88,7 @@ def build_completion_error_events(request, error):
         "error_param": error.error.param,
     }
 
-    messages = _build_messages_events(
-        request.get("messages", []),
-        completion_id,
-        request.get("model") or request.get("engine"),
-    )
-
-    return {"messages": messages, "completion": completion}
+    return completion
 
 
 def build_embedding_event(response, request, response_headers, response_time):
