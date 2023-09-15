@@ -2,9 +2,13 @@ import uuid
 from datetime import datetime
 
 import openai
+import newrelic.agent
 
 
-def build_messages_events(messages, completion_id, model):
+def build_messages_events(messages, model, tags={}):
+    completion_id = newrelic.agent.current_span_id()
+    trace_id = newrelic.agent.current_trace_id()
+
     events = []
     for index, message in enumerate(messages):
         currMessage = {
@@ -12,11 +16,13 @@ def build_messages_events(messages, completion_id, model):
             "content": (message.get("content") or "")[:4095],
             "role": message.get("role"),
             "completion_id": completion_id,
+            "trace.id": trace_id,
             "sequence": index,
             "model": model,
             "vendor": "openAI",
             "ingest_source": "PythonSDK",
         }
+        currMessage.update(tags)
 
         events.append(currMessage)
 
@@ -40,8 +46,16 @@ def _get_rate_limit_data(response_headers):
     }
 
 
-def build_completion_events(response, request, response_headers, response_time):
-    completion_id = str(uuid.uuid4())
+def build_completion_events(
+    response, request, response_headers, response_time, final_message
+):
+    completion_id = newrelic.agent.current_span_id()
+    trace_id = newrelic.agent.current_trace_id()
+    transaction_id = (
+        newrelic.agent.current_transaction().guid
+        if newrelic.agent.current_transaction() != None
+        else None
+    )
 
     completion = {
         "id": completion_id,
@@ -61,6 +75,9 @@ def build_completion_events(response, request, response_headers, response_time):
         "number_of_messages": len(request.get("messages", [])) + len(response.choices),
         "organization": response.organization,
         "api_version": response_headers.get("openai-version"),
+        "trace.id": trace_id,
+        "transactionId": transaction_id,
+        "response": final_message["content"],
     }
 
     completion.update(_get_rate_limit_data(response_headers))

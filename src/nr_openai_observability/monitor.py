@@ -22,6 +22,7 @@ EventName = "LlmCompletion"
 MessageEventName = "LlmChatCompletionMessage"
 SummaryEventName = "LlmChatCompletionSummary"
 EmbeddingEventName = "LlmEmbedding"
+TransactionBeginEventName = "LlmTransactionBegin"
 
 
 def _patched_call(original_fn, patched_fn):
@@ -158,7 +159,7 @@ def patcher_create_chat_completion(original_fn, *args, **kwargs):
     try:
         timestamp = time.time()
         with newrelic.agent.FunctionTrace(
-            name="AI/OpenAI/Chat/Completions/Create", terminal=True
+            name="AI/OpenAI/Chat/Completions/Create", group="", terminal=True
         ):
             handle_start_completion(kwargs)
             result = original_fn(*args, **kwargs)
@@ -179,10 +180,11 @@ async def patcher_create_chat_completion_async(original_fn, *args, **kwargs):
     try:
         timestamp = time.time()
         with newrelic.agent.FunctionTrace(
-            name="AI/OpenAI/Chat/Completions/Create", terminal=True
+            name="AI/OpenAI/Chat/Completions/Create", group="", terminal=True
         ):
             handle_start_completion(kwargs)
             result = await original_fn(*args, **kwargs)
+
             time_delta = time.time() - timestamp
             logger.debug(f"Finished running function: '{original_fn.__qualname__}'.")
 
@@ -194,10 +196,25 @@ async def patcher_create_chat_completion_async(original_fn, *args, **kwargs):
 
 @handle_errors
 def handle_start_completion(request):
-    completion_id = newrelic.agent.current_span_id()
+    transaction = newrelic.agent.current_transaction()
+    if transaction and getattr(transaction, "_traceHasHadCompletions", None) == None:
+        transaction._traceHasHadCompletions = True
+        messages = request.get("messages", [])
+        human_message = next((m for m in messages if m["role"] == "user"), None)
+        if human_message:
+            monitor.record_event(
+                {
+                    "human_prompt": human_message["content"],
+                    "vendor": "openAI",
+                    "trace.id": transaction.trace_id,
+                    "ingest_source": "PythonAgentHybrid",
+                },
+                TransactionBeginEventName,
+            )
+
+    # completion_id = newrelic.agent.current_trace_id()
     message_events = build_messages_events(
         request.get("messages", []),
-        completion_id,
         request.get("model") or request.get("engine"),
     )
     for event in message_events:
@@ -206,19 +223,22 @@ def handle_start_completion(request):
 
 @handle_errors
 def handle_finish_chat_completion(response, request, response_time):
-    completion_id = newrelic.agent.current_span_id()
+    final_message = response.choices[0].message
+
     completion = build_completion_events(
-        response, request, getattr(response, "_nr_response_headers"), response_time
+        response,
+        request,
+        getattr(response, "_nr_response_headers"),
+        response_time,
+        final_message,
     )
     delattr(response, "_nr_response_headers")
 
     response_message = build_messages_events(
-        [response.choices[0].message],
-        completion_id,
-        response.model,
-    )
+        [final_message], response.model, {"is_final_response": True}
+    )[0]
 
-    monitor.record_event(response_message[0], MessageEventName)
+    monitor.record_event(response_message, MessageEventName)
 
     monitor.record_event(completion, SummaryEventName)
 
@@ -303,9 +323,12 @@ def patcher_create_embedding(original_fn, *args, **kwargs):
 
     result, time_delta = None, None
     try:
-        timestamp = time.time()
-        result = original_fn(*args, **kwargs)
-        time_delta = time.time() - timestamp
+        with newrelic.agent.FunctionTrace(
+            name="AI/OpenAI/Embeddings/Create", group="", terminal=True
+        ):
+            timestamp = time.time()
+            result = original_fn(*args, **kwargs)
+            time_delta = time.time() - timestamp
     except Exception as ex:
         handle_create_embedding(result, kwargs, ex, time_delta)
         raise ex
