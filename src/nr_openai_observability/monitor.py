@@ -1,4 +1,5 @@
 import inspect
+import json
 import logging
 import os
 import sys
@@ -207,7 +208,22 @@ def handle_start_completion(request):
         request.get("model") or request.get("engine"),
     )
     for event in message_events:
+        was_truncated = len(event["content"]) > 256
+        event["truncated"] = was_truncated
+        
         monitor.record_event(event, MessageEventName)
+        if was_truncated:
+            logger.warning("Trimming long log message")
+            newrelic.agent.record_log_event(
+                json.dumps(
+                    {
+                        "message": event["content"],
+                        "type": "ChatContinuation",
+                        "id": event["id"],
+                    }
+                ),
+                "INFO",
+            )
 
 
 @handle_errors
